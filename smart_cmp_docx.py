@@ -90,7 +90,7 @@ def highlight_real_changes(text_a, text_b):
             display_b.append(block_b)
         else:
             if block_a:
-                display_a.append(f"<span style='color:#999; text-decoration:line-through; background-color:#ffcccc;'>{block_a}</span>")
+                display_a.append(f"<span style='background-color:#ffcccc;'>{block_a}</span>")
             if block_b:
                 display_b.append(f"<span style='background-color:#ccffcc; color:black; font-weight:bold;'>{block_b}</span>")
             
@@ -239,7 +239,7 @@ if f_orig and f_rev:
                 # Display truly deleted
                 if truly_deleted:
                     deleted_text = "\n\n".join(truly_deleted)
-                    high_a = f"<span style='color:#999; text-decoration:line-through; background-color:#ffcccc;'>{deleted_text}</span>"
+                    high_a = f"<span style='background-color:#ffcccc; color:black;'>{deleted_text}</span>"
                     high_b = "<span style='color:#666; font-style:italic;'>[Deleted Section]</span>"
                 else:
                     high_a = ""
