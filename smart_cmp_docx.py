@@ -103,27 +103,25 @@ with st.sidebar:
     f_orig = st.file_uploader("Original Document", type=["txt", "docx"])
     f_rev = st.file_uploader("Revised Document", type=["txt", "docx"])
     anchor = st.text_input("Anchor Point", "Như vậy tôi nghe")
-    context_lines = st.number_input("Context paragraphs", min_value=0, max_value=50, value=15)
+    context_lines = st.number_input("Context paragraphs", min_value=0, max_value=50, value=3)
 
 if f_orig and f_rev:
     # Detect file type and read accordingly
     if f_orig.name.endswith('.txt'):
         raw_a = get_text_file(f_orig)
     else:
-        from docx import Document
         doc = Document(f_orig)
         raw_a = [p.text.strip() for p in doc.paragraphs if p.text.strip() != ""]
     
     if f_rev.name.endswith('.txt'):
         raw_b = get_text_file(f_rev)
     else:
-        from docx import Document
         doc = Document(f_rev)
         raw_b = [p.text.strip() for p in doc.paragraphs if p.text.strip() != ""]
     
-    # Normalize both documents: replace hyphens, normalize whitespace
-    raw_a = [normalize_text(p) for p in raw_a]
-    raw_b = [normalize_text(p) for p in raw_b]
+    # ONLY replace hyphens with spaces - preserve everything else
+    raw_a = [p.replace('-', ' ') for p in raw_a]
+    raw_b = [p.replace('-', ' ') for p in raw_b]
     
     # Flatten poem sections (combine short consecutive lines)
     raw_a = flatten_poem_lines(raw_a)
@@ -142,23 +140,10 @@ if f_orig and f_rev:
                                             [simplify(t) for t in text_b], 
                                             autojunk=False)
     
-    # Track actual positions as we process differences
-    # Start at 0 (beginning of documents after anchor)
-    last_sync_a = 0
-    last_sync_b = 0
-    
     for tag, i1, i2, j1, j2 in global_matcher.get_opcodes():
-        if tag == 'equal':
-            # Update our tracking - documents are synced at the END of this equal block
-            last_sync_a = i2
-            last_sync_b = j2
-        elif tag != 'equal':
-            # Check if it's a real content difference
+        if tag != 'equal':
             if simplify("".join(text_a[i1:i2])) != simplify("".join(text_b[j1:j2])):
-                # Store the PREVIOUS sync point (before this difference started)
-                # This is where the documents were last in agreement
-                real_diffs.append((tag, i1, i2, j1, j2, last_sync_a, last_sync_b))
-            # Don't update last_sync here - we only update on 'equal' blocks
+                real_diffs.append((i1, i2, j1, j2))
 
     if not real_diffs:
         st.success("Documents are fully synchronized. No content differences found!")
@@ -176,119 +161,16 @@ if f_orig and f_rev:
             if st.button("Next ➡️"): st.session_state.nav = min(len(real_diffs)-1, st.session_state.nav + 1)
 
         # Show Results
-        tag, i1, i2, j1, j2, last_sync_a, last_sync_b = real_diffs[st.session_state.nav]
+        i1, i2, j1, j2 = real_diffs[st.session_state.nav]
         
-        diff_paras_a = text_a[i1:i2]
-        diff_paras_b = text_b[j1:j2]
+        para_a = "\n\n".join(text_a[i1:i2]) if i1 != i2 else "[Empty]"
+        para_b = "\n\n".join(text_b[j1:j2]) if j1 != j2 else "[Empty]"
         
-        # SMART RESYNC: If one side is empty, search from PREVIOUS sync point (not current j1)
-        if len(diff_paras_a) > 0 and len(diff_paras_b) == 0:
-            # Original has content, Revised is empty at j1
-            # Search text_b starting from last_sync_b (the previous good sync point)
-            st.write(f"DEBUG: Searching text_b from PREVIOUS sync point {last_sync_b}...")
-            
-            resync_offset_a = None
-            resync_idx_b = None
-            
-            # Look through diff_paras_a to find first match in text_b
-            # Search from last_sync_b forward (not from j1!)
-            for offset_a, para_a in enumerate(diff_paras_a):
-                simp_a = simplify(para_a)
-                
-                if offset_a < 3:  # Debug first 3 paragraphs
-                    st.write(f"DEBUG: Searching para {offset_a}: '{para_a[:60]}...'")
-                
-                # Search from previous sync point forward
-                search_start = last_sync_b
-                search_end = min(last_sync_b + 200, len(text_b))
-                
-                for idx_b in range(search_start, search_end):
-                    if simplify(text_b[idx_b]) == simp_a:
-                        resync_offset_a = offset_a
-                        resync_idx_b = idx_b
-                        st.write(f"DEBUG: Found resync! offset_a={offset_a}, idx_b={idx_b}")
-                        st.write(f"DEBUG: Matched text: {para_a[:80]}...")
-                        break
-                
-                if resync_idx_b is not None:
-                    break
-            # Look through diff_paras_a to find first match in text_b
-            # Search from last_sync_b forward (not from j1!)
-            for offset_a, para_a in enumerate(diff_paras_a):
-                simp_a = simplify(para_a)
-                
-                # Search from previous sync point forward
-                search_start = last_sync_b
-                search_end = min(last_sync_b + 200, len(text_b))
-                
-                for idx_b in range(search_start, search_end):
-                    if simplify(text_b[idx_b]) == simp_a:
-                        resync_offset_a = offset_a
-                        resync_idx_b = idx_b
-                        break
-                
-                if resync_idx_b is not None:
-                    break
-            
-            if resync_idx_b is not None:
-                # Split content: truly deleted vs common
-                truly_deleted = diff_paras_a[:resync_offset_a]
-                common_in_a = diff_paras_a[resync_offset_a:]
-                common_in_b = text_b[resync_idx_b:resync_idx_b + len(common_in_a)]
-                
-                # Display truly deleted
-                if truly_deleted:
-                    deleted_text = "\n\n".join(truly_deleted)
-                    high_a = f"<span style='background-color:#ffcccc; color:black;'>{deleted_text}</span>"
-                    high_b = "<span style='color:#666; font-style:italic;'>[Deleted Section]</span>"
-                else:
-                    high_a = ""
-                    high_b = ""
-                
-                # Display common section in BOTH panels
-                if common_in_a:
-                    if high_a:
-                        high_a += "<br><br><div style='border-top:1px dashed #ccc; margin:15px 0; padding-top:15px;'>"
-                        high_b += "<br><br><div style='border-top:1px dashed #ccc; margin:15px 0; padding-top:15px;'>"
-                    
-                    high_a += "<br><br>".join(common_in_a)
-                    high_b += "<br><br>".join(common_in_b)
-                    
-                    if high_a:
-                        high_a += "</div>"
-                        high_b += "</div>"
-                
-                # Add context after the common section
-                context_start_a = i2
-                context_start_b = resync_idx_b + len(common_in_a)
-                
-            else:
-                # No resync found - treat as pure deletion
-                para_a = "\n\n".join(diff_paras_a)
-                high_a, _ = highlight_real_changes(para_a, "")
-                high_b = "<span style='color:#666; font-style:italic;'>[Deleted Section]</span>"
-                context_start_a = i2
-                context_start_b = j2
-        
-        elif len(diff_paras_a) == 0 and len(diff_paras_b) > 0:
-            # Similar logic for insertions
-            para_b = "\n\n".join(diff_paras_b)
-            _, high_b = highlight_real_changes("", para_b)
-            high_a = "<span style='color:#666; font-style:italic;'>[Added Section]</span>"
-            context_start_a = i2
-            context_start_b = j2
-        
-        else:
-            # Both have content - do word-level comparison
-            para_a = "\n\n".join(diff_paras_a)
-            para_b = "\n\n".join(diff_paras_b)
-            high_a, high_b = highlight_real_changes(para_a, para_b)
-            context_start_a = i2
-            context_start_b = j2
-        
-        # Add context paragraphs
-        context_a = text_a[context_start_a:min(context_start_a + context_lines, len(text_a))]
-        context_b = text_b[context_start_b:min(context_start_b + context_lines, len(text_b))]
+        high_a, high_b = highlight_real_changes(para_a, para_b)
+
+        # Add context
+        context_a = text_a[i2:min(i2 + context_lines, len(text_a))]
+        context_b = text_b[j2:min(j2 + context_lines, len(text_b))]
         
         if context_a or context_b:
             high_a += "<br><br><div style='border-top:1px dashed #ccc; margin:15px 0; padding-top:15px;'>"
