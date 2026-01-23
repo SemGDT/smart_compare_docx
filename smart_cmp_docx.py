@@ -63,9 +63,9 @@ def simplify(text):
     """
     if not text: return ""
     text = re.sub(r'\(\d+\)', '', text)  # Remove (1), (2)
-    text = text.replace('-', '').replace(' ', '')
+    text = text.replace('-', ' ')
     text = re.sub(r'[.,;:!?\u3002\uff0c\u3001]', '', text) # Remove punctuation
-    return text.lower()
+    return text
 
 def highlight_real_changes(text_a, text_b):
     """
@@ -142,8 +142,14 @@ if f_orig and f_rev:
     
     for tag, i1, i2, j1, j2 in global_matcher.get_opcodes():
         if tag != 'equal':
-            if simplify("".join(text_a[i1:i2])) != simplify("".join(text_b[j1:j2])):
+            if simplify(" ".join(text_a[i1:i2])) != simplify(" ".join(text_b[j1:j2])):
                 real_diffs.append((i1, i2, j1, j2))
+
+    if "last_anchor" not in st.session_state:
+        st.session_state.last_anchor = anchor
+    if st.session_state.last_anchor != anchor:
+        st.session_state.nav = 0
+        st.session_state.last_anchor = anchor
 
     if not real_diffs:
         st.success("Documents are fully synchronized. No content differences found!")
