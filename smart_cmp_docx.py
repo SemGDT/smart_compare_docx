@@ -65,6 +65,7 @@ def simplify(text):
     text = re.sub(r'\(\d+\)', '', text)  # Remove (1), (2)
     text = text.replace('-', ' ')
     text = re.sub(r'[.,;:!?\u3002\uff0c\u3001]', '', text) # Remove punctuation
+    text = text.lower()
     return text
 
 def highlight_real_changes(text_a, text_b):
