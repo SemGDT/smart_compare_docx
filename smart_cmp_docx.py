@@ -1,8 +1,9 @@
-﻿import streamlit as st
+import streamlit as st
 from docx import Document
 import difflib
 import re
 import unicodedata
+import os
 
 # ─────────────────────────────────────────────
 # FILE READING
@@ -39,7 +40,62 @@ def flatten_poem_lines(paragraphs, window_size=4):
             i += 1
     return result
 
-def simplify(text):
+# ─────────────────────────────────────────────
+# EQUIVALENCE MAPPING
+# ─────────────────────────────────────────────
+EQUIV_FILE = os.path.join(os.path.dirname(__file__), "equivalent_words.txt") if '__file__' in globals() else "equivalent_words.txt"
+
+def load_equivalences():
+    if not os.path.exists(EQUIV_FILE):
+        return "", {}, None
+    
+    with open(EQUIV_FILE, "r", encoding="utf-8") as f:
+        content = f.read()
+    
+    parent = {}
+    
+    def find(i):
+        if parent[i] == i:
+            return i
+        parent[i] = find(parent[i])
+        return parent[i]
+        
+    def union(i, j):
+        root_i = find(i)
+        root_j = find(j)
+        if root_i != root_j:
+            parent[root_j] = root_i
+            
+    equiv_map = {}
+    all_words = set()
+    
+    for line in content.split('\n'):
+        parts = [simplify_basic(p.strip()) for p in line.split(',') if p.strip()]
+        parts = [p for p in parts if p]
+        
+        for p in parts:
+            if p not in parent:
+                parent[p] = p
+                all_words.add(p)
+                
+        if len(parts) > 1:
+            for i in range(1, len(parts)):
+                union(parts[0], parts[i])
+                
+    for word in all_words:
+        root = find(word)
+        if word != root:
+            equiv_map[word] = root
+                    
+    if equiv_map:
+        sorted_variants = sorted(equiv_map.keys(), key=len, reverse=True)
+        pattern_str = r'(?<!\w)(' + '|'.join(map(re.escape, sorted_variants)) + r')(?!\w)'
+        compiled_pattern = re.compile(pattern_str, flags=re.UNICODE)
+        return content, equiv_map, compiled_pattern
+    
+    return content, {}, None
+
+def simplify_basic(text):
     """Normalize for comparison only: remove punctuation, hyphens, lowercase."""
     if not text:
         return ""
@@ -52,6 +108,14 @@ def simplify(text):
     text = text.replace('đ', 'd')  # Latin Small Letter D with stroke -> d
     text = text.replace('ð', 'd')  # Latin Small Letter Eth -> d
     return ' '.join(text.split())
+
+equiv_raw_text, EQUIV_MAP, EQUIV_PATTERN = load_equivalences()
+
+def simplify(text):
+    text = simplify_basic(text)
+    if EQUIV_PATTERN and text:
+        text = EQUIV_PATTERN.sub(lambda m: EQUIV_MAP[m.group(1)], text)
+    return text
 
 # ─────────────────────────────────────────────
 # SENTENCE SPLITTING
@@ -312,15 +376,18 @@ st.set_page_config(page_title="Deep-Sync Comparison", layout="wide")
 st.title("Document Comparison (Typo & Offset Resilient)")
 
 with st.sidebar:
-    st.markdown("---")
-    st.markdown("<small style='color:#888;'>**Version:** 2025-04-03 (Fixed highlight algorithm)</small>", unsafe_allow_html=True)
-    st.markdown("---")
     f_orig = st.file_uploader("Original Document", type=["txt", "docx"])
     f_rev  = st.file_uploader("Revised Document",  type=["txt", "docx"])
     anchor = st.text_input("Anchor Point", "Như vậy tôi nghe")
     context_lines = st.number_input("Context sentences", min_value=0, max_value=50, value=5)
-    debug_mode = st.checkbox("Debug mode (show normalized text)", value=False)
 
+    with st.expander("Dictionary Mapping", expanded=False):
+        st.markdown("<small>Define equivalent words, comma-separated on each line. The first word is the canonical form.</small>", unsafe_allow_html=True)
+        new_equiv_text = st.text_area("Equivalences", value=equiv_raw_text, height=150, label_visibility="collapsed")
+        if st.button("Save Equivalences"):
+            with open(EQUIV_FILE, "w", encoding="utf-8") as f:
+                f.write(new_equiv_text)
+            st.rerun()
 if f_orig and f_rev:
     # ── Read ──
     if f_orig.name.endswith('.txt'):
@@ -439,10 +506,6 @@ if f_orig and f_rev:
                 f"font-size:18px; min-height:300px; line-height:1.9;'>{high_a}</div>",
                 unsafe_allow_html=True
             )
-            if debug_mode:
-                st.write("**Sentences in diff block A (normalized):**")
-                for i, (raw, norm, pi) in enumerate(full_diffs[st.session_state.nav]['sents_a']):
-                    st.caption(f"[{i}] Para {pi}: {norm}")
         with col2:
             st.subheader("Revised")
             st.markdown(
@@ -450,7 +513,3 @@ if f_orig and f_rev:
                 f"font-size:18px; min-height:300px; line-height:1.9;'>{high_b}</div>",
                 unsafe_allow_html=True
             )
-            if debug_mode:
-                st.write("**Sentences in diff block B (normalized):**")
-                for i, (raw, norm, pi) in enumerate(full_diffs[st.session_state.nav]['sents_b']):
-                    st.caption(f"[{i}] Para {pi}: {norm}")
